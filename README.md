@@ -16,7 +16,7 @@ The product ships as **two cooperating pieces**:
 
 | Deliverable | Role | Repo home |
 |-------------|------|-----------|
-| **Swift harness** | macOS/desktop app: connectors, vault, dictation insertion, interchangeable local inference, menu-bar / HUD UX | **`main`** (default): Swift Package + Xcode workspace as implementation lands |
+| **Swift harness** | macOS/desktop app: connectors, vault, dictation insertion, interchangeable local inference, menu-bar / HUD UX | **`main`** (default): Swift Package (`Package.swift`) + optional Xcode wrapper |
 | **Public website** | Open-source positioning: downloads, screenshots, ethos, contrib guide, roadmap, pointers to binaries and docs—not the runtime | Branch **`website`**: landing site sources under `website/` |
 
 The website does **not** host model weights or LMS credentials; it is **marketing plus documentation**. The Swift app owns **privacy-sensitive** workflows.
@@ -66,20 +66,43 @@ Small instruction-tuned models (e.g. compact open-weight stacks) excel at short 
 
 ## Engineering design (summary)
 
-The **Swift harness** is the system of record for everything except promotional content. Architectural layers (implement as modules when code exists):
+The **Swift harness** is the system of record for everything except promotional content. Layers (implemented as SPM modules under `Sources/`):
 
-1. **Connectors** — Pull from Canvas (REST + OAuth PKCE preferred) and pluggable scrapers/feeds for course pages. Output: **immutable sync events** with stable IDs.
-2. **Harness core** — Map events → **vault mutations** (create/update notes, backlinks), maintain **sync cursors**, enforce rate limits and user-visible sync logs.
-3. **Vault** — Files on disk (Markdown + front matter + wikilinks); optional SQLite/GRDB index for search and graph edges if pure-file parsing is too slow.
-4. **Retrieval** — Given the active course or user selection, build a **small context bundle** (linked neighborhood + recent changes) for the model and UI.
-5. **Dictation path** — Capture audio → local ASR (Speech framework and/or bundled model) → transcript → model-assisted formatting if enabled → **trusted insertion** into the focused app (Accessibility / event simulation strategy TBD per App Store and sandbox posture).
-6. **Inference adapters** — Protocol-based backends (e.g. subprocess to `llama.cpp`, user-provided server, future Core ML). **No** hard dependency on a single vendor model in core types.
+1. **Connectors** — Target Canvas REST + OAuth PKCE with Keychain-held tokens. **Today**: `StubCanvasConnector` emits deterministic demo events shaped as `[CanonicalEvent]`.
+2. **Harness reducer** — `VaultCoordinator` merges connector output plus future dictation append paths into Markdown atoms (single-writer discipline).
+3. **Vault** — Markdown + YAML front matter + lightly linked bodies under `~/Library/Application Support/<bundle>/Vault/` (`assignments/`, `announcements/`, `files/` today). FTS / SQLite graph index is slated once pure-file traversal is insufficient.
+4. **Retrieval** — `RetrievalEngine` gathers the freshest Markdown bodies + user transcript into `RetrievalPacket` (proper wikilink neighborhood expansion still TODO).
+5. **Dictation** — Mic capture → `Speech` adapters → Accessibility / paste bridging with enforced preview (**today**: deterministic `DictationOrchestrator` stub).
+6. **Inference** — `InferenceBackend.generate` abstracts local runtimes (**today**: `NoOpInferenceBackend` echoes packets for wiring tests).
 
-**Website** (on branch `website`): static or SSG (Astro, VitePress, or similar) for speed and cheap hosting; CI builds to GitHub Pages or Netlify; content mirrors high-level docs and release artifacts.
+**Website** (branch `website`, folder `website/`): static site / SSG for marketing docs + release links—not runtime state.
 
-**Non-functional targets**: offline-first after setup; auditable sync history; clear separation of **secret storage** (Keychain) vs **note vault** (user-exportable).
+**Non-functional posture**: offline-friendly sync; audited connector logs surfacing backoff + errors; LMS secrets confined to Keychain (not Markdown).
 
-For module boundaries, threat model for tokens, and phased delivery, see **`claude.md`**.
+For threat-model sketches, phased milestones, and contributor checklists see **`claude.md`**.
+
+### Build & run (`main`)
+
+- **Requires** macOS 14+ plus a Swift **6.x** toolchain (validated with Swift 6.1).
+
+```bash
+swift build           # emits .build/debug/SpeechFlow
+swift run SpeechFlow  # launches the SwiftUI harness window
+```
+
+`swift run` produces an unsigned developer executable—not a notarized `.app` yet—so treat it as a harness for local QA.
+
+#### Module cheat sheet
+
+| Target | Highlights |
+|--------|------------|
+| `SpeechFlowCore` | `CanonicalEvent`, `SyncCursor`, `RetrievalPacket`, `LMSConnector`, `InferenceBackend` |
+| `SpeechFlowVault` | `VaultCoordinator`, Application Support resolver, `RetrievalEngine` |
+| `SpeechFlowConnectors` | `StubCanvasConnector`, `ConnectorSamples` |
+| `SpeechFlowInference` | `NoOpInferenceBackend` |
+| `SpeechFlowDictation` | `DictationOrchestrator` stub |
+| `SpeechFlowUI` | `HarnessState` (`@Observable`) + `SpeechFlowRootView` |
+| `SpeechFlow` (executable) | `@main` SwiftUI `App` |
 
 ---
 
@@ -100,6 +123,10 @@ For module boundaries, threat model for tokens, and phased delivery, see **`clau
 
 ## Status
 
-Planning / design phase — this repository defines **intent and architecture** until implementation lands.
+Swift harness scaffolding now lives on `main`:
 
-Contribution areas we expect next: connector contracts, vault format spec, Swift module layout, dictation/injection prototype, local inference adapter interface.
+- SPM modules compile end-to-end; `swift run SpeechFlow` opens the UI shell.
+- Canonical LMS ingestion path is runnable via **`StubCanvasConnector` → `[CanonicalEvent]` → `VaultCoordinator`** (writes Markdown stubs you can inspect in Finder).
+- Dictation, Canvas OAuth, real inference backends, and signed app packaging remain **explicit next milestones**.
+
+What we expect contributors to tackle soon: Speech / Accessibility MVP, SQLite-backed retrieval neighborhoods, Canvas token storage + sync scheduling, packaged reference `InferenceBackend`, release CI/notarization.

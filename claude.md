@@ -49,18 +49,19 @@ Revise **both** markdown files together when changing any row above.
 
 1. **Event-sourced ingestion** — Connectors emit **canonical events** (`assignment_updated`, `announcement_new`, `file_metadata_new`). The harness reduces events to vault operations; connectors never write Markdown directly unless that is intentionally the adapter contract.
 2. **Single writer for vault mutations** — One serial queue (`VaultCoordinator`) merges connector output, manual edits detection, and dictation append to avoid forked note state.
-3. **Adapter boundaries** — `InferenceBackend`, `SpeechPipeline`, `LMSConnector` are protocols in a **core** module; concrete types live in feature modules to keep linking lean.
+3. **Adapter boundaries** — `InferenceBackend`, **`DictationOrchestrator` façade**, and `LMSConnector` protocols live in **`SpeechFlowCore`**; concrete LMS + mic + model types stay in their feature modules to keep linking lean.
 4. **Secrets hygiene** — OAuth tokens **Keychain-only**; no logging payloads that contain bearer tokens.
 
 ### Planned module map (Swift Package / Xcode targets)
 
 ```
-SpeechFlowCore        — models, CanonicalEvent*, NoteDraft, RetrievalPacket
-SpeechFlowVault       — file IO, indexing, graph helpers, migration
-SpeechFlowConnectors  — Canvas, generic URL watcher (narrow scope)
-SpeechFlowInference   — InferenceBackend implementations (process, FFI stub)
-SpeechFlowDictation   — capture, ASR, insertion strategy façade
-SpeechFlowApp         — SwiftUI shell, lifecycle, onboarding
+SpeechFlowCore        — models (`CanonicalEvent`), `SyncCursor`, `NoteDraft`, `RetrievalPacket`, LMS + inference protocols
+SpeechFlowVault       — actor `VaultCoordinator`, Application Support resolver, Markdown rendering, lightweight `RetrievalEngine`
+SpeechFlowConnectors  — `StubCanvasConnector`, `ConnectorSamples` (deterministic scaffold data)
+SpeechFlowInference   — `InferenceBackend` concrete scaffolds (starts with `NoOpInferenceBackend`)
+SpeechFlowDictation   — microphone / Speech façade (`DictationOrchestrator` stub)
+SpeechFlowUI          — `@Observable HarnessState`, `SpeechFlowRootView`
+SpeechFlow executable — `@main` SwiftUI `App` bridging the UI module
 ```
 
 Collapse or rename for v0 **only if** redundancy is proved; bias toward compilation isolation over “one mega target.”
@@ -70,7 +71,7 @@ Collapse or rename for v0 **only if** redundancy is proved; bias toward compilat
 ```
 Connectors → [CanonicalEvent] → VaultCoordinator → vault markdown + index
 Focused app + user shortcut → DictationOrchestrator → transcript
-RetrievalEngine → subgraph (wikilink neighborhood + FTS hits) → RetrievalPacket → InferenceBackend → user-reviewed text → paste + optional note append
+RetrievalEngine → freshest Markdown excerpts (temporary strategy: recent `mtime`; replace with FTS / graph neighborhood) → RetrievalPacket → InferenceBackend → reviewed text → Accessibility / clipboard insertion + vault append
 ```
 
 ### Canonical event sketch (evolve in code, not only prose)
@@ -82,8 +83,8 @@ RetrievalEngine → subgraph (wikilink neighborhood + FTS hits) → RetrievalPac
 ### Connector contract (protocol)
 
 ```swift
-// Conceptual — exact names in repo when implemented
-protocol LMSConnector {
+// Implemented in Sources/SpeechFlowCore/ConnectorProtocol.swift (+ concrete types under SpeechFlowConnectors/)
+public protocol LMSConnector: Sendable {
     var id: String { get }
     func authenticate(interactive: Bool) async throws
     func sync(since: SyncCursor?) async throws -> [CanonicalEvent]
@@ -107,7 +108,7 @@ Canvas: **OAuth 2.0 PKCE**, least scopes; store refresh token in Keychain; respe
 ### Inference adapters
 
 ```swift
-protocol InferenceBackend: Sendable {
+public protocol InferenceBackend: Sendable {
     func generate(prompt: RetrievalPacket, options: GenerationOptions) async throws -> String
     var health: BackendHealth { get async }
 }
@@ -163,11 +164,11 @@ Trust and discovery: **what** SpeechFlow is, **how** to install, **how** to cont
 
 | Phase | Outcome |
 |-------|---------|
-| **P0** | Swift app shell + Keychain + empty vault + manual note create |
-| **P1** | Canvas connector read-only + event → notes for assignments/announcements |
-| **P2** | Dictation loop + preview + paste path / accessibility writer (one strategy) |
-| **P3** | First `InferenceBackend` + retrieval packet from linked notes |
-| **P4** | Website live on branch `website` + release linkage |
+| **P0** | Swift harness bootstrap on **`main`** — SPM modules + SwiftUI shell + `VaultCoordinator` Markdown reducer + deterministic `StubCanvasConnector` + Finder reveal + Retrieval / inference protocol smoke tests (`swift run SpeechFlow`). |
+| **P1** | Authentic Canvas OAuth (PKCE) + REST sync emitting real `[CanonicalEvent]` with Keychain-stored secrets + backoff-aware logging. |
+| **P2** | Mic capture (`Speech`/CoreAudio), preview pipeline, Accessibility + clipboard insertion strategy chosen + hardened. |
+| **P3** | First non-placeholder `InferenceBackend` (bundled MLX/llama.cpp bridge or audited subprocess adapter) respecting weight manifests. |
+| **P4** | Website polish + nightly GitHub Releases + notarized installer references linked from landing branch. |
 
 Update this table in **both** docs when scope shifts.
 
@@ -190,9 +191,37 @@ Assume **rapid context loss**. Every feature proposal should answer:
 
 ---
 
-## File map expectation (when code exists)
+## File map expectation (`main` harness)
 
-- `README.md` — public narrative, architecture summary, doc parity rule.
-- `claude.md` — this operational plan for agents.
-- `main` — Swift harness sources (`SpeechFlow*/`, `SpeechFlow.xcodeproj` or SPM at root).
-- `website/` (on **`website`** branch) — landing site only.
+Repo root essentials:
+
+| Path | Purpose |
+|------|---------|
+| `Package.swift` | SwiftPM declarative dependency graph (`SpeechFlow*` targets + `.executable`) |
+| `Sources/SpeechFlowCore/` | Shared models + LMS / inference protocols |
+| `Sources/SpeechFlowVault/` | `VaultCoordinator`, Application Support resolver, retrieval helpers |
+| `Sources/SpeechFlowConnectors/` | LMS adapters (stub + eventual Canvas REST) |
+| `Sources/SpeechFlowInference/` | Local model bridges |
+| `Sources/SpeechFlowDictation/` | Mic + ASR façade |
+| `Sources/SpeechFlowUI/` | SwiftUI app shell primitives |
+| `Sources/SpeechFlow/` | Executable entry (`@main`) |
+
+Docs + policy:
+
+| Path | Purpose |
+|------|---------|
+| `README.md` | Human-facing roadmap + parity rule + build cheatsheet |
+| `claude.md` | Agent / engineer operating manual (this doc) |
+
+Public site scaffolding:
+
+| Path | Purpose |
+|------|---------|
+| `website/` | Lives on branch **`website`** per marketing/README contract |
+
+Developer loop:
+
+```bash
+swift build           # emits .build/debug/SpeechFlow
+swift run SpeechFlow  # harness window (unsigned dev artifact)
+```
