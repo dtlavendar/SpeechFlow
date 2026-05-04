@@ -222,6 +222,8 @@ Public site scaffolding:
 Developer loop:
 
 ```bash
-swift build           # emits .build/debug/SpeechFlow
-swift run SpeechFlow  # harness window (unsigned dev artifact)
+swift build           # emits .build/debug/SpeechFlow (compile only — no Dock icon)
+swift run SpeechFlow  # exact casing required (`Speech` + capital `Flow`) foregrounds UI
 ```
+
+`swift run speechflow` errors (`no executable product named …`). The harness blocks STDIN until Quit because it is a GUI app; `SpeechFlowEntry` activates `NSApp` explicitly so CLI launches mimic `.app` focus behavior.

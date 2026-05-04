@@ -86,11 +86,13 @@ For threat-model sketches, phased milestones, and contributor checklists see **`
 - **Requires** macOS 14+ plus a Swift **6.x** toolchain (validated with Swift 6.1).
 
 ```bash
-swift build           # emits .build/debug/SpeechFlow
-swift run SpeechFlow  # launches the SwiftUI harness window
+swift build           # emits .build/debug/SpeechFlow (does not launch a UI by itself)
+swift run SpeechFlow  # launches SwiftUI — product name must match exactly (capital **F**)
 ```
 
-`swift run` produces an unsigned developer executable—not a notarized `.app` yet—so treat it as a harness for local QA.
+`Speechflow`, `speechflow`, etc., fail SPM with **`no executable product named …`**. SPM / CLI bundles historically skip normal activation; SpeechFlow attaches a lightweight **`NSApplicationDelegate`** (`SpeechFlowEntry.swift`) so the Dock icon plus foreground window should appear reliably.
+
+While the window is open, **`swift run` blocks that terminal session** until you ⌘Q or close the window (this can look “stuck”). `swift run` still produces unsigned developer binaries—not a notarized `.app` yet—for local QA only.
 
 #### Module cheat sheet
 
