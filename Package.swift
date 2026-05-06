@@ -41,5 +41,14 @@ let package = Package(
             name: "SpeechFlow",
             dependencies: ["SpeechFlowUI"]
         ),
+        .testTarget(
+            name: "SpeechFlowHarnessTests",
+            dependencies: [
+                "SpeechFlowConnectors",
+                "SpeechFlowCore",
+                "SpeechFlowInference",
+                "SpeechFlowVault",
+            ]
+        ),
     ]
 )
